@@ -4,15 +4,15 @@
 import os
 import sys
 import ConfigParser
-from daemonize import Daemonize
 from datetime import datetime
 
 __DEFAULT_CACHE_FILE__ = "/tmp/ansible_inventory_joyent.cache"
 __DEFAULT_PID_FILE__ = "/tmp/ansible_inventory_joyent.pid"
 __DEFAULT_ENV_PREFIX__ = "JOYENT_INV_"
 __DEFAULT_CACHE_EXPIRE__ = 300
-__DEFAULT_URL__ = "eu-ams-1.api.joyentcloud.com"
+__DEFAULT_URL__ = "east-1.api.joyentcloud.com"
 __DEFAULT_AUTH_KEY__ = "~/.ssh/id_rsa"
+
 try:
     import json
 except ImportError:
@@ -49,29 +49,29 @@ class JoyentInventory(object):
                 self.config.read(config_filename)
                 break
 
-        self.cache_enable = self._get_config('cache_enable', fail_if_not_set=False, default_value="true").lower() \
+        self.cache_enable = self._get_config('cache_enable', 'cache', fail_if_not_set=False, default_value="true").lower() \
                              in ['true', '1', 't', 'y', 'yes', 'yeah']
 
-        self.cache_smart = self._get_config('cache_smart', fail_if_not_set=False, default_value="true").lower() \
+        self.cache_smart = self._get_config('cache_smart', 'cache', fail_if_not_set=False, default_value="true").lower() \
                              in ['true', '1', 't', 'y', 'yes', 'yeah']
 
-        self.cache_expire = int(self._get_config('cache_expire', fail_if_not_set=False, default_value=300))
-        self.cache_file = self._get_config('cache_file', fail_if_not_set=False, default_value=__DEFAULT_CACHE_FILE__)
-        self.joyent_uri = self._get_config('uri', fail_if_not_set=False, default_value=__DEFAULT_URL__)
-        self.joyent_secret = self._get_config('auth_key',  fail_if_not_set=False, default_value=__DEFAULT_AUTH_KEY__)
-        self.joyent_username = self._get_config('auth_username', fail_if_not_set=True)
-        self.joyent_key_name = self._get_config('auth_key_name', fail_if_not_set=True)
-        self.debug = self._get_config('debug', fail_if_not_set=False)
+        self.cache_expire = int(self._get_config('cache_expire', 'cache', fail_if_not_set=False, default_value=300))
+        self.cache_file = self._get_config('cache_file', 'cache', fail_if_not_set=False, default_value=__DEFAULT_CACHE_FILE__)
+        self.joyent_uri = self._get_config('uri', 'api', fail_if_not_set=False, default_value=__DEFAULT_URL__)
+        self.joyent_secret = self._get_config('auth_key', 'auth', fail_if_not_set=False, default_value=__DEFAULT_AUTH_KEY__)
+        self.joyent_username = self._get_config('auth_username', 'auth', fail_if_not_set=True)
+        self.joyent_key_name = self._get_config('auth_key_name', 'auth', fail_if_not_set=True)
+        self.debug = self._get_config('debug', 'defaults', fail_if_not_set=False)
         # Compile key id
         self.joyent_key_id = "/" + self.joyent_username + "/keys/" + self.joyent_key_name
 
-    def _get_config(self, value, fail_if_not_set=True, default_value=None):
+    def _get_config(self, value, section, fail_if_not_set=True, default_value=None):
         # Env variable always win
         if os.getenv(__DEFAULT_ENV_PREFIX__ + value.upper(), False):
             return os.getenv(__DEFAULT_ENV_PREFIX__ + value.upper())
         try:
-            if self.config.get('main', value, vars=False):
-                return self.config.get('main', value)
+            if self.config.get(section, value, vars=False):
+                return self.config.get(section, value)
         except ConfigParser.NoOptionError:
             pass
         except ConfigParser.NoSectionError:
@@ -107,66 +107,32 @@ class JoyentInventory(object):
 
     def build_inv_from_api(self):
         servers = self.api_get()
-        self.inventory["all"] = []
-        self.inventory["hosts"] = {}
-        my_meta_data = {}
+        self.inventory["all"] = {'hosts': [], 'vars': {}}
+        self.inventory['_meta'] = {'hostvars': {}}
+
         for server in servers:
-            self.inventory["hosts"][server.name] = {}  # Init server
-            # Groups Management
-            groups = [server.type]
+            self.inventory["all"]["hosts"].append(server.name)
+            self.inventory['_meta']['hostvars'][server.name] = {}
+            self.inventory['_meta']['hostvars'][server.name]['type'] = server.type
+            self.inventory['_meta']['hostvars'][server.name]['brand'] = server.brand
+            self.inventory['_meta']['hostvars'][server.name]['memory'] = server.memory
+            self.inventory['_meta']['hostvars'][server.name]['disk'] = server.disk
+            self.inventory['_meta']['hostvars'][server.name]['image'] = server.image
+            self.inventory['_meta']['hostvars'][server.name]['package'] = server.package
+            self.inventory['_meta']['hostvars'][server.name]['compute_node'] = server.compute_node
             try:
-                if server.tags:
-                    self.inventory["hosts"][server.name].update({"joyent_tags": server.tags})
-                    # Convert tags into groups except for the ignored list item
-                    for tag in server.tags:
-                        if tag not in self.tag_ignore:
-                            groups.append(server.tags[tag])
-            except AttributeError, e:
-                if self.debug:
-                    sys.stderr.write('Error: {}\n'.format(e))
-                else:
-                    pass
-
-            for group in groups:
-                if group not in self.inventory:
-                    # Add to a group
-                    self.inventory.update({group: []})
-                self.inventory[group].append(server.name)
-            # Add tp group all
-            self.inventory["all"].append(server.name)
-            # hosts Management
-            if server.public_ips:
-                ssh_connection = server.public_ips[0]
-            elif server.private_ips:
-                ssh_connection = server.private_ips[0]
-            else:
-                ssh_connection = server.name
-
-            try:
-                self.inventory["hosts"][server.name].update({"joyent_image": server.image,
-                                                             "joyent_compute_node": server.compute_node,
-                                                             "joyent_networks": server.networks,
-                                                             "joyent_package": server.package})
+                self.inventory['_meta']['hostvars'][server.name]['ansible_host'] = server.primaryIp
             except AttributeError:
                 pass
-
-            self.inventory["hosts"][server.name].update({"joyent_id": server.id,
-                                                         "joyent_public_ip": server.public_ips,
-                                                         "joyent_private_ip": server.private_ips,
-                                                         "ansible_ssh_host": ssh_connection})
-
-            # SmartOS python
             if server.type == "smartmachine":
-                self.inventory["hosts"][server.name]["ansible_python_interpreter"] = "/opt/local/bin/python"
-            # Build meta
-            my_meta_data.update({server.name: self.inventory["hosts"][server.name]})
-        self.inventory.update({'_meta': {'hostvars': my_meta_data}})
+                self.inventory['_meta']['hostvars'][server.name]['ansible_python_interpreter'] = "/opt/local/bin/python"
+
         self.save_cache()
 
     def api_get(self):
         """ Ask Joyent for all servers in a data center"""
         sdc = DataCenter(location=self.joyent_uri, key_id=self.joyent_key_id, secret=self.joyent_secret,
-                         allow_agent=True, verbose=self.debug)
+                         allow_agent=False, verbose=self.debug)
         servers = sdc.machines()
         return servers
 
@@ -204,10 +170,6 @@ class JoyentInventory(object):
             sys.exit(1)
         sys.stdout.flush()
         sys.stderr.flush()
-        # Update cache if we are using smart cache
-        if self.cache_enable and self.cache_smart and not os.path.exists(self.pid_file):
-            daemon = Daemonize(app="joyent_inv", pid=self.pid_file, action=self.build_inv_from_api)
-            daemon.start()
 
         sys.exit(0)
 
