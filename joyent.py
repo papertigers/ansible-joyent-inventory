@@ -111,6 +111,15 @@ class JoyentInventory(object):
         self.inventory['_meta'] = {'hostvars': {}}
 
         for server in servers:
+            # Check for ansible.role tag
+            try:
+                role = server.tags["ansible.role"]
+                # Check to see if we already have a mapping for role name
+                if not role in self.inventory:
+                    self.inventory[role] = {'hosts': [], 'vars': {}}
+                self.inventory[role]["hosts"].append(server.name)
+            except KeyError:
+                pass
             self.inventory["all"]["hosts"].append(server.name)
             self.inventory['_meta']['hostvars'][server.name] = {}
             self.inventory['_meta']['hostvars'][server.name]['type'] = server.type
@@ -120,6 +129,10 @@ class JoyentInventory(object):
             self.inventory['_meta']['hostvars'][server.name]['image'] = server.image
             self.inventory['_meta']['hostvars'][server.name]['package'] = server.package
             self.inventory['_meta']['hostvars'][server.name]['compute_node'] = server.compute_node
+            try:
+                self.inventory['_meta']['hostvars'][server.name]['tags'] = server.tags
+            except AttributeError:
+                pass
             try:
                 self.inventory['_meta']['hostvars'][server.name]['ansible_host'] = server.primaryIp
             except AttributeError:

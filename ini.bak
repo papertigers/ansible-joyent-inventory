@@ -3,13 +3,13 @@
 [auth]
 ## auth type key (password not support for now)
 auth_type     = key
-auth_username = mikezeller
+auth_username = <REPLACE_CUSTERNAME>
 ## ssh key to use (if using key)
-auth_key      = ~/.ssh/triton_other_rsa
-auth_key_name = triton_other
+auth_key      = ~/.ssh/id_rsa
+auth_key_name = <REPLACE_USERNAME>
 
 [api]
-uri = us-east-3b.api.joyentcloud.com
+uri = eu-ams-1.api.joyentcloud.com
 
 [cache]
 ## 300 min expire
